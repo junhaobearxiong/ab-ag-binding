@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from atom3d.datasets import LMDBDataset
 # import atom3d.datasets.ppi.neighbors as nb
-import neighbors as nb
+from .neighbors import get_subunits, get_negatives
 from torch.utils.data import IterableDataset
 from . import GVP, GVPConvLayer, LayerNorm
 import torch_cluster, torch_geometric, torch_scatter
@@ -286,9 +286,9 @@ class PPIDataset(IterableDataset):
                 pairs = data['atoms_pairs']
                 
                 for i, (ensemble_name, target_df) in enumerate(pairs.groupby(['ensemble'])):
-                    sub_names, (bound1, bound2, _, _) = nb.get_subunits(target_df)
+                    sub_names, (bound1, bound2, _, _) = get_subunits(target_df)
                     positives = neighbors[neighbors.ensemble0 == ensemble_name]
-                    negatives = nb.get_negatives(positives, bound1, bound2)
+                    negatives = get_negatives(positives, bound1, bound2)
                     negatives['label'] = 0
                     labels = self._create_labels(positives, negatives, num_pos=10, neg_pos_ratio=1)
                     
