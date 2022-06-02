@@ -25,6 +25,8 @@ parser.add_argument('--lr', metavar='RATE', default=1e-4, type=float,
                     help='learning rate')
 parser.add_argument('--load', metavar='PATH', default=None, 
                     help='initialize first 2 GNN layers with pretrained weights')
+parser.add_argument('--data_dir', metavar='PATH', default='/storage/',
+                    help='path to the directory `atom3d-data`')
 
 args = parser.parse_args()
 
@@ -47,7 +49,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model_id = float(time.time())
 
 def main():
-    datasets = get_datasets(args.task, args.lba_split)
+    datasets = get_datasets(args.task, args.data_dir, args.lba_split)
     dataloader = partial(torch_geometric.data.DataLoader, 
                     num_workers=args.num_workers, batch_size=args.batch)
     if args.task not in ['PPI', 'RES']:
@@ -203,20 +205,21 @@ def forward(model, batch, device):
         batch = batch.to(device)
     return model(batch)
 
-def get_datasets(task, lba_split=30):
+def get_datasets(task, data_dir, lba_split=30):
+    data_dir += 'atom3d-data/'
     data_path = {
-        'RES' : 'atom3d-data/RES/raw/RES/data/',
-        'PPI' : 'atom3d-data/PPI/splits/DIPS-split/data/',
-        'RSR' : 'atom3d-data/RSR/splits/candidates-split-by-time/data/',
-        'PSR' : 'atom3d-data/PSR/splits/split-by-year/data/',
-        'MSP' : 'atom3d-data/MSP/splits/split-by-sequence-identity-30/data/',
-        'LEP' : 'atom3d-data/LEP/splits/split-by-protein/data/',
-        'LBA' : f'atom3d-data/LBA/splits/split-by-sequence-identity-{lba_split}/data/',
-        'SMP' : 'atom3d-data/SMP/splits/random/data/'
+        'RES' : data_dir + 'RES/raw/RES/data/',
+        'PPI' : data_dir + 'PPI/splits/DIPS-split/data/',
+        'RSR' : data_dir + 'RSR/splits/candidates-split-by-time/data/',
+        'PSR' : data_dir + 'PSR/splits/split-by-year/data/',
+        'MSP' : data_dir + 'MSP/splits/split-by-sequence-identity-30/data/',
+        'LEP' : data_dir + 'LEP/splits/split-by-protein/data/',
+        'LBA' : data_dir + 'LBA/splits/split-by-sequence-identity-{}/data/'.format(lba_split),
+        'SMP' : data_dir + 'SMP/splits/random/data/'
     }[task]
         
     if task == 'RES':
-        split_path = 'atom3d-data/RES/splits/split-by-cath-topology/indices/'
+        split_path = data_dir + 'RES/splits/split-by-cath-topology/indices/'
         dataset = partial(gvp.atom3d.RESDataset, data_path)        
         trainset = dataset(split_path=split_path+'train_indices.txt')
         valset = dataset(split_path=split_path+'val_indices.txt')
