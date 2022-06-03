@@ -42,11 +42,14 @@ from atom3d.util import metrics
 import sklearn.metrics as sk_metrics
 from collections import defaultdict
 import scipy.stats as stats
+import pickle
+
 print = partial(print, flush=True)
 
 models_dir = 'models/gvp/'
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model_id = float(time.time())
+outputs_dir = 'outputs/gvp/'
 
 def main():
     datasets = get_datasets(args.task, args.data_dir, args.lba_split)
@@ -82,6 +85,15 @@ def test(model, testset):
                 ids.extend(batch.id)
             targets.extend(list(label.cpu().numpy()))
             predicts.extend(list(pred.cpu().numpy()))
+    
+    # bear: save the prediction
+    outputs = {
+        'predicts': predicts,
+        'targets': targets,
+        'ids': ids
+    }
+    with open(outputs_dir + '{}_out.pkl'.format(args.test)) as f:
+        pickle.dump(outputs, f)        
 
     for name, func in metrics.items():
         if args.task in ['PSR', 'RSR']:
