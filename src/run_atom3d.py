@@ -44,7 +44,7 @@ from collections import defaultdict
 import scipy.stats as stats
 print = partial(print, flush=True)
 
-models_dir = 'models'
+models_dir = 'models/gvp/'
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model_id = float(time.time())
 
