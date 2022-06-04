@@ -53,7 +53,7 @@ outputs_dir = 'outputs/gvp/'
 
 def main():
     datasets = get_datasets(args.task, args.data_dir, args.lba_split)
-    dataloader = partial(torch_geometric.data.DataLoader, 
+    dataloader = partial(torch_geometric.loader.DataLoader, 
                     num_workers=args.num_workers, batch_size=args.batch)
     if args.task not in ['PPI', 'RES']:
         dataloader = partial(dataloader, shuffle=True)
@@ -72,11 +72,10 @@ def main():
 def test(model, testset):
     model.load_state_dict(torch.load(args.test))
     model.eval()
-    t = tqdm.tqdm(testset)
     metrics = get_metrics(args.task)
     targets, predicts, ids = [], [], []
     with torch.no_grad():
-        for batch in t:
+        for batch in tqdm.tqdm(testset):
             pred = forward(model, batch, device)
             label = get_label(batch, args.task, args.smp_idx)
             if args.task == 'RES':
@@ -125,10 +124,9 @@ def loop(dataset, model, optimizer=None, max_time=None):
     start = time.time()
     
     loss_fn = get_loss(args.task)
-    t = tqdm.tqdm(dataset)
     total_loss, total_count = 0, 0
     
-    for batch in t:
+    for batch in tqdm.tqdm(dataset):
         if max_time and (time.time() - start) > 60*max_time: break
         if optimizer: optimizer.zero_grad()
         try:
@@ -154,8 +152,9 @@ def loop(dataset, model, optimizer=None, max_time=None):
                 print('Skipped batch due to OOM', flush=True)
                 continue
             
-        t.set_description(f"{total_loss/total_count:.8f}")
-        
+        # t.set_description(f"{total_loss/total_count:.8f}")
+        tqdm.write(f"{total_loss/total_count:.8f}")
+
     return total_loss / total_count
 
 def load(model, path):

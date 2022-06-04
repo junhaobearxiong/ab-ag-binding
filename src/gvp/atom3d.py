@@ -236,6 +236,9 @@ class PPIDataset(IterableDataset):
         self.dataset = LMDBDataset(lmdb_dataset)
         self.transform = BaseTransform()
         
+    def __len__(self):
+        return len(self.dataset)
+
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
