@@ -23,10 +23,12 @@ parser.add_argument('--test', metavar='PATH', default=None,
                     help='evaluate a trained model')
 parser.add_argument('--lr', metavar='RATE', default=1e-4, type=float,
                     help='learning rate')
-parser.add_argument('--load', metavar='PATH', default=None, 
+parser.add_argument('--load', metavar='PATH', default=None,
                     help='initialize first 2 GNN layers with pretrained weights')
 parser.add_argument('--data_dir', metavar='PATH', default='/storage/',
                     help='path to the directory `atom3d-data`')
+parser.add_argument('--testset_path', metavar='PATH', default=None, 
+                    help='path to a specified test set')
 
 args = parser.parse_args()
 
@@ -53,14 +55,20 @@ outputs_dir = 'outputs/gvp/'
 
 def main():
     datasets = get_datasets(args.task, args.data_dir, args.lba_split)
-    dataloader = partial(torch_geometric.loader.DataLoader, 
+    dataloader = partial(torch_geometric.data.DataLoader,
                     num_workers=args.num_workers, batch_size=args.batch)
     if args.task not in ['PPI', 'RES']:
         dataloader = partial(dataloader, shuffle=True)
-        
-    trainset, valset, testset = map(dataloader, datasets)    
+
+    trainset, valset, testset = map(dataloader, datasets)
     model = get_model(args.task).to(device)
     
+    # TODO: if taking db5 as testset, need to decide which pairs of residues to predict
+    # all positive and negative pairs in unbound structures
+    if args.testset_path:
+        dataset = gvp.atom_3d.PPIDataset(args.testset_path, db5=True)
+        testset = dataloader(dataset)
+
     if args.test:
         test(model, testset)
 
@@ -68,9 +76,9 @@ def main():
         if args.load:
             load(model, args.load)
         train(model, trainset, valset)
-        
+
 def test(model, testset):
-    model.load_state_dict(torch.load(args.test))
+    model.load_state_dict(torch.load(args.test, map_location=torch.device(device)))
     model.eval()
     metrics = get_metrics(args.task)
     targets, predicts, ids = [], [], []
@@ -84,15 +92,16 @@ def test(model, testset):
                 ids.extend(batch.id)
             targets.extend(list(label.cpu().numpy()))
             predicts.extend(list(pred.cpu().numpy()))
-    
+
     # bear: save the prediction
     outputs = {
         'predicts': predicts,
         'targets': targets,
         'ids': ids
     }
-    with open(outputs_dir + '{}_out.pkl'.format(args.test)) as f:
-        pickle.dump(outputs, f)        
+    model_name = args.test.split('/')[-1]
+    with open(outputs_dir + '{}_out.pkl'.format(model_name), 'wb') as f:
+        pickle.dump(outputs, f)
 
     for name, func in metrics.items():
         if args.task in ['PSR', 'RSR']:
@@ -101,11 +110,11 @@ def test(model, testset):
         print(f"{name}: {value}")
 
 def train(model, trainset, valset):
-                                
+
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    
+
     best_path, best_val = None, np.inf
-    
+
     for epoch in range(args.epochs):
         model.train()
         loss = loop(trainset, model, optimizer=optimizer, max_time=args.train_time)
@@ -119,14 +128,14 @@ def train(model, trainset, valset):
         if loss < best_val:
             best_path, best_val = path, loss
         print(f'BEST {best_path} VAL loss: {best_val:.8f}')
-    
+
 def loop(dataset, model, optimizer=None, max_time=None):
     start = time.time()
-    
+    t = tqdm.tqdm(dataset)
     loss_fn = get_loss(args.task)
     total_loss, total_count = 0, 0
-    
-    for batch in tqdm.tqdm(dataset):
+
+    for batch in t:
         if max_time and (time.time() - start) > 60*max_time: break
         if optimizer: optimizer.zero_grad()
         try:
@@ -136,12 +145,12 @@ def loop(dataset, model, optimizer=None, max_time=None):
             torch.cuda.empty_cache()
             print('Skipped batch due to OOM', flush=True)
             continue
-            
+
         label = get_label(batch, args.task, args.smp_idx)
         loss_value = loss_fn(out, label)
         total_loss += float(loss_value)
         total_count += 1
-        
+
         if optimizer:
             try:
                 loss_value.backward()
@@ -151,9 +160,8 @@ def loop(dataset, model, optimizer=None, max_time=None):
                 torch.cuda.empty_cache()
                 print('Skipped batch due to OOM', flush=True)
                 continue
-            
-        # t.set_description(f"{total_loss/total_count:.8f}")
-        tqdm.write(f"{total_loss/total_count:.8f}")
+
+        t.set_description(f"{total_loss/total_count:.8f}")
 
     return total_loss / total_count
 
@@ -166,7 +174,7 @@ def load(model, path):
                state_dict[name].shape == p.shape:
             print("Loading", name)
             model.state_dict()[name].copy_(p)
-        
+
 #######################################################################
 
 def get_label(batch, task, smp_idx=None):
@@ -184,7 +192,7 @@ def get_metrics(task):
             _targets[_id].append(_t)
             _predict[_id].append(_p)
         return np.mean([metric(_targets[_id], _predict[_id]) for _id in _targets])
-        
+
     correlations = {
         'pearson': partial(_correlation, metrics.pearson),
         'kendall': partial(_correlation, metrics.kendall),
@@ -192,8 +200,8 @@ def get_metrics(task):
     }
     mean_correlations = {f'mean {k}' : partial(v, glob=False) \
                             for k, v in correlations.items()}
-    
-    return {                       
+
+    return {
         'RSR' : {**correlations, **mean_correlations},
         'PSR' : {**correlations, **mean_correlations},
         'PPI' : {'auroc': metrics.auroc},
@@ -203,12 +211,12 @@ def get_metrics(task):
         'LBA' : {**correlations, 'rmse': partial(sk_metrics.mean_squared_error, squared=False)},
         'SMP' : {'mae': sk_metrics.mean_absolute_error}
     }[task]
-            
+
 def get_loss(task):
     if task in ['PSR', 'RSR', 'SMP', 'LBA']: return nn.MSELoss() # regression
     elif task in ['PPI', 'MSP', 'LEP']: return nn.BCELoss() # binary classification
     elif task in ['RES']: return nn.CrossEntropyLoss() # multiclass classification
-    
+
 def forward(model, batch, device):
     if type(batch) in [list, tuple]:
         batch = batch[0].to(device), batch[1].to(device)
@@ -228,21 +236,21 @@ def get_datasets(task, data_dir, lba_split=30):
         'LBA' : data_dir + 'LBA/splits/split-by-sequence-identity-{}/data/'.format(lba_split),
         'SMP' : data_dir + 'SMP/splits/random/data/'
     }[task]
-        
+
     if task == 'RES':
         split_path = data_dir + 'RES/splits/split-by-cath-topology/indices/'
-        dataset = partial(gvp.atom3d.RESDataset, data_path)        
+        dataset = partial(gvp.atom3d.RESDataset, data_path)
         trainset = dataset(split_path=split_path+'train_indices.txt')
         valset = dataset(split_path=split_path+'val_indices.txt')
         testset = dataset(split_path=split_path+'test_indices.txt')
-    
+
     elif task == 'PPI':
         trainset = gvp.atom3d.PPIDataset(data_path+'train')
         valset = gvp.atom3d.PPIDataset(data_path+'val')
         testset = gvp.atom3d.PPIDataset(data_path+'test')
-        
+
     else:
-        transform = {                       
+        transform = {
             'RSR' : gvp.atom3d.RSRTransform,
             'PSR' : gvp.atom3d.PSRTransform,
             'MSP' : gvp.atom3d.MSPTransform,
@@ -250,11 +258,11 @@ def get_datasets(task, data_dir, lba_split=30):
             'LBA' : gvp.atom3d.LBATransform,
             'SMP' : gvp.atom3d.SMPTransform,
         }[task]()
-        
+
         trainset = LMDBDataset(data_path+'train', transform=transform)
         valset = LMDBDataset(data_path+'val', transform=transform)
         testset = LMDBDataset(data_path+'test', transform=transform)
-        
+
     return trainset, valset, testset
 
 def get_model(task):
